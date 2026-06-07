@@ -1,0 +1,6 @@
+{
+  "name": "Stock Tracker",
+  "description": "A beautiful, real-time stock price tracker with modern Material 3 expressive design, customizable groups/portfolios, live mock Google Finance price fluctuations, target/stoploss limit notifications, and interactive settings.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
