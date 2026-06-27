@@ -53,3 +53,16 @@ data class WatchlistStockEntity(
     val googleFinanceUrl: String? = null
 )
 
+@Entity(tableName = "price_alerts")
+data class PriceAlertEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val symbol: String,
+    val targetPrice: Double? = null,
+    val stopLoss: Double? = null,
+    val proximityThreshold: Double? = null,
+    val targetHit: Boolean = false,
+    val stopLossHit: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+

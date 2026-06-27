@@ -1017,14 +1017,21 @@ class StockRepository(
             } catch (e: Exception) {
                 Log.e(tag, "Failed initial live values refresh: ${e.message}")
             }
-            while (true) {
-                try {
-                    val isDataSaver = settingsRepository.isDataSaver.value
-                    val intervalSeconds = if (isDataSaver) 900 else settingsRepository.refreshInterval.value
-                    delay(intervalSeconds * 1000L)
-                    refreshAllLivePrices(context)
-                } catch (e: Exception) {
-                    Log.e(tag, "Error in price refresh tick: ${e.message}", e)
+            combine(
+                settingsRepository.isDataSaver,
+                settingsRepository.refreshInterval
+            ) { isDataSaver, refreshInterval ->
+                if (isDataSaver) 900 else refreshInterval
+            }.collectLatest { intervalSeconds ->
+                while (true) {
+                    try {
+                        delay(intervalSeconds * 1000L)
+                        refreshAllLivePrices(context)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(tag, "Error in price refresh tick: ${e.message}", e)
+                    }
                 }
             }
         }
@@ -1139,9 +1146,88 @@ class StockRepository(
                     }
                 }
             }
+
+            // Check multiple price alerts
+            val priceAlerts = try {
+                stockDao.getAllPriceAlerts()
+            } catch (e: Exception) {
+                Log.e(tag, "Failed to load price alerts for thresholds check", e)
+                emptyList()
+            }
+            for (alert in priceAlerts) {
+                val live = livePrices.find { it.symbol == alert.symbol } ?: continue
+
+                var updatedTargetHit = alert.targetHit
+                var updatedStopLossHit = alert.stopLossHit
+                var statusChanged = false
+
+                // Check targetPrice Alert with optional Proximity
+                if (alert.targetPrice != null && !alert.targetHit) {
+                    val prox = alert.proximityThreshold ?: 0.0
+                    val isTargetReached = live.price >= alert.targetPrice
+                    val isProximityReached = prox > 0.0 && live.price >= (alert.targetPrice - prox)
+                    
+                    if (isTargetReached || isProximityReached) {
+                        updatedTargetHit = true
+                        statusChanged = true
+                        val title = if (isTargetReached) "🎯 Target Hit: ${alert.symbol}" else "🎯 Target Proximity Hit: ${alert.symbol}"
+                        val content = if (isTargetReached) {
+                            "${alert.symbol} reached ₹${String.format("%.2f", live.price)} (Target: ₹${String.format("%.2f", alert.targetPrice)})"
+                        } else {
+                            "${alert.symbol} is at ₹${String.format("%.2f", live.price)}, within ₹${String.format("%.2f", prox)} of target (₹${String.format("%.2f", alert.targetPrice)})!"
+                        }
+                        sendNotification(context, id = alert.id + 10000, title = title, content = content)
+                    }
+                }
+
+                // Check stopLoss Alert with optional Proximity
+                if (alert.stopLoss != null && !alert.stopLossHit) {
+                    val prox = alert.proximityThreshold ?: 0.0
+                    val isStopLossReached = live.price <= alert.stopLoss
+                    val isProximityReached = prox > 0.0 && live.price <= (alert.stopLoss + prox)
+                    
+                    if (isStopLossReached || isProximityReached) {
+                        updatedStopLossHit = true
+                        statusChanged = true
+                        val title = if (isStopLossReached) "🚨 Stoploss Triggered: ${alert.symbol}" else "🚨 Stoploss Proximity: ${alert.symbol}"
+                        val content = if (isStopLossReached) {
+                            "${alert.symbol} dropped to ₹${String.format("%.2f", live.price)} (Stoploss: ₹${String.format("%.2f", alert.stopLoss)})"
+                        } else {
+                            "${alert.symbol} is at ₹${String.format("%.2f", live.price)}, within ₹${String.format("%.2f", prox)} of stoploss (₹${String.format("%.2f", alert.stopLoss)})!"
+                        }
+                        sendNotification(context, id = alert.id + 20000, title = title, content = content)
+                    }
+                }
+
+                if (statusChanged) {
+                    try {
+                        stockDao.updatePriceAlertStatus(alert.id, targetHit = updatedTargetHit, stopLossHit = updatedStopLossHit)
+                    } catch (e: Exception) {
+                        Log.e(tag, "Failed to update price alert status for alert ID ${alert.id}", e)
+                    }
+                }
+            }
         } catch (e: Exception) {
             Log.e(tag, "Critical failure in checkPriceThresholds simulation", e)
         }
+    }
+
+    fun getPriceAlertsForSymbol(symbol: String): Flow<List<PriceAlertEntity>> {
+        return stockDao.getPriceAlertsForSymbolFlow(symbol)
+    }
+
+    suspend fun addPriceAlert(symbol: String, targetPrice: Double?, stopLoss: Double?, proximityThreshold: Double?) = withContext(Dispatchers.IO) {
+        val alert = PriceAlertEntity(
+            symbol = symbol,
+            targetPrice = targetPrice,
+            stopLoss = stopLoss,
+            proximityThreshold = proximityThreshold
+        )
+        stockDao.insertPriceAlert(alert)
+    }
+
+    suspend fun deletePriceAlert(id: Int) = withContext(Dispatchers.IO) {
+        stockDao.deletePriceAlertById(id)
     }
 
     private fun createNotificationChannel(context: Context) {

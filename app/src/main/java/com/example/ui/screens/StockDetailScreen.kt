@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -63,6 +64,7 @@ fun StockDetailScreen(
     val notFoundSymbols by viewModel.notFoundSymbols.collectAsStateWithLifecycle()
     val isOffline by viewModel.isOffline.collectAsStateWithLifecycle()
     val isDataSaver by viewModel.isDataSaver.collectAsStateWithLifecycle()
+    val priceAlerts by viewModel.getPriceAlertsForSymbol(symbol).collectAsStateWithLifecycle(initialValue = emptyList())
 
     val isNotFound = notFoundSymbols.contains(symbol.uppercase().trim())
     val stock = liveStocks.find { it.symbol == symbol }
@@ -331,18 +333,32 @@ fun StockDetailScreen(
                     Tab(
                         selected = activeDetailTab == 1,
                         onClick = { activeDetailTab = 1 },
+                        text = { Text("My Alerts List", fontWeight = FontWeight.Bold) },
+                        icon = { Icon(Icons.Default.NotificationsActive, contentDescription = null) }
+                    )
+                    Tab(
+                        selected = activeDetailTab == 2,
+                        onClick = { activeDetailTab = 2 },
                         text = { Text("Track On Google", fontWeight = FontWeight.Bold) },
                         icon = { Icon(Icons.Default.Language, contentDescription = null) }
                     )
                 }
 
-                if (activeDetailTab == 1) {
+                if (activeDetailTab == 2) {
                     GoogleFinanceWebView(
                         symbol = symbol,
                         googleFinanceUrl = if (googleFinanceUrlInput.isNotBlank()) googleFinanceUrlInput.trim() else null,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
+                    )
+                } else if (activeDetailTab == 1) {
+                    AlertsListTab(
+                        alerts = priceAlerts,
+                        currentPrice = stock?.price ?: 0.0,
+                        onDeleteAlert = { alertId ->
+                            viewModel.deletePriceAlert(alertId, symbol)
+                        }
                     )
                 } else {
                     var isRefreshing by remember { mutableStateOf(false) }
@@ -720,9 +736,19 @@ fun StockDetailScreen(
                                         )
                                     }
 
+                                    // Create multiple alert record
+                                    if (targetPriceVal != null || stopLossVal != null) {
+                                        viewModel.addPriceAlert(
+                                            symbol = stock.symbol,
+                                            targetPrice = targetPriceVal,
+                                            stopLoss = stopLossVal,
+                                            proximityThreshold = proxVal
+                                        )
+                                    }
+
                                     scope.launch {
                                         val msg = buildString {
-                                            append("Limits updated successfully")
+                                            append("New Alert created and limits updated successfully")
                                             if (isOnWatchlist) append(" on Personal Watchlist")
                                             if (gId != null) {
                                                 val fName = groups.find { it.id == gId }?.name ?: "portfolio"
@@ -1736,5 +1762,213 @@ fun SecondsTickerTextInline(lastUpdatedEpoch: Long, isUpdateFailed: Boolean, mod
         color = color,
         modifier = modifier
     )
+}
+
+@Composable
+fun AlertsListTab(
+    alerts: List<com.example.data.PriceAlertEntity>,
+    currentPrice: Double,
+    onDeleteAlert: (Int) -> Unit
+) {
+    if (alerts.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(24.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.NotificationsOff,
+                    contentDescription = "No alerts configured icon",
+                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                )
+                Text(
+                    text = "No alerts configured yet",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "Configure targets and stoplosses in the 'Tracking & Alerts' tab to add multiple alerts.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+            }
+        }
+    } else {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Text(
+                    text = "Your Configured Price Alerts",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Alerts are sorted in chronological order (newest first).",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            items(alerts, key = { it.id }) { alert ->
+                AlertCard(
+                    alert = alert,
+                    currentPrice = currentPrice,
+                    onDelete = { onDeleteAlert(alert.id) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AlertCard(
+    alert: com.example.data.PriceAlertEntity,
+    currentPrice: Double,
+    onDelete: () -> Unit
+) {
+    val df = java.text.SimpleDateFormat("dd MMM yyyy, hh:mm a", java.util.Locale.getDefault())
+    val dateString = df.format(java.util.Date(alert.createdAt))
+
+    ElevatedCard(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("alert_card_${alert.id}"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val isAnyHit = alert.targetHit || alert.stopLossHit
+                    val statusColor = if (isAnyHit) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    val statusText = if (alert.targetHit) "Target Hit" else if (alert.stopLossHit) "Stoploss Hit" else "Active"
+                    val statusIcon = if (alert.targetHit) Icons.Default.CheckCircle else if (alert.stopLossHit) Icons.Default.Warning else Icons.Default.NotificationsActive
+
+                    Icon(
+                        imageVector = statusIcon,
+                        contentDescription = "Alert status icon",
+                        tint = statusColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = statusText,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = statusColor
+                    )
+                }
+
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .size(36.dp)
+                        .testTag("delete_alert_btn_${alert.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "Delete this alert",
+                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                if (alert.targetPrice != null) {
+                    Column {
+                        Text(
+                            text = "Target Price",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "₹${String.format("%.2f", alert.targetPrice)}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = if (alert.targetHit) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                if (alert.stopLoss != null) {
+                    Column {
+                        Text(
+                            text = "Stoploss",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "₹${String.format("%.2f", alert.stopLoss)}",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = if (alert.stopLossHit) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                if (alert.proximityThreshold != null && alert.proximityThreshold > 0.0) {
+                    Column {
+                        Text(
+                            text = "Proximity",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "±₹${String.format("%.2f", alert.proximityThreshold)}",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Created: $dateString",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                )
+
+                Text(
+                    text = "Current: ₹${String.format("%.2f", currentPrice)}",
+                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
 }
 

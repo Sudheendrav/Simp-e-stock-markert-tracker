@@ -81,4 +81,29 @@ interface StockDao {
 
     @Query("UPDATE watchlist_stocks SET displayOrder = :displayOrder WHERE symbol = :symbol")
     suspend fun updateWatchlistStockDisplayOrder(symbol: String, displayOrder: Int)
+
+    // Multiple alerts operations
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPriceAlert(alert: PriceAlertEntity): Long
+
+    @Query("SELECT * FROM price_alerts ORDER BY createdAt DESC")
+    fun getAllPriceAlertsFlow(): Flow<List<PriceAlertEntity>>
+
+    @Query("SELECT * FROM price_alerts ORDER BY createdAt DESC")
+    suspend fun getAllPriceAlerts(): List<PriceAlertEntity>
+
+    @Query("SELECT * FROM price_alerts WHERE symbol = :symbol ORDER BY createdAt DESC")
+    fun getPriceAlertsForSymbolFlow(symbol: String): Flow<List<PriceAlertEntity>>
+
+    @Query("SELECT * FROM price_alerts WHERE symbol = :symbol ORDER BY createdAt DESC")
+    suspend fun getPriceAlertsForSymbol(symbol: String): List<PriceAlertEntity>
+
+    @Query("DELETE FROM price_alerts WHERE id = :id")
+    suspend fun deletePriceAlertById(id: Int)
+
+    @Query("UPDATE price_alerts SET targetHit = :targetHit, stopLossHit = :stopLossHit WHERE id = :id")
+    suspend fun updatePriceAlertStatus(id: Int, targetHit: Boolean, stopLossHit: Boolean)
+
+    @Query("DELETE FROM price_alerts WHERE symbol = :symbol")
+    suspend fun deletePriceAlertsBySymbol(symbol: String)
 }

@@ -155,6 +155,24 @@ class StockTrackerViewModel(
         }
     }
 
+    fun getPriceAlertsForSymbol(symbol: String): Flow<List<PriceAlertEntity>> {
+        return repository.getPriceAlertsForSymbol(symbol)
+    }
+
+    fun addPriceAlert(symbol: String, targetPrice: Double?, stopLoss: Double?, proximityThreshold: Double?) {
+        viewModelScope.launch {
+            repository.addPriceAlert(symbol, targetPrice, stopLoss, proximityThreshold)
+            repository.refreshStockPrice(symbol)
+        }
+    }
+
+    fun deletePriceAlert(id: Int, symbol: String) {
+        viewModelScope.launch {
+            repository.deletePriceAlert(id)
+            repository.refreshStockPrice(symbol)
+        }
+    }
+
     fun updateSavedStocksOrder(orderedIds: List<Int>) {
         viewModelScope.launch {
             orderedIds.forEachIndexed { index, id ->
